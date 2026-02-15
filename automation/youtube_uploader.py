@@ -110,10 +110,14 @@ class YouTubeUploader:
                     if len(body['snippet']['title']) < 90:
                         body['snippet']['title'] += ' #Shorts'
             
-            # Handle scheduled publishing
-            if scheduled_time and metadata.get('privacy_status') == 'private':
-                body['status']['privacyStatus'] = 'private'
-                body['status']['publishAt'] = scheduled_time.isoformat() + 'Z'
+            # Handle scheduled publishing - DISABLED for now, upload immediately as public
+            # Scheduling requires specific time format and YouTube Studio verification
+            # if scheduled_time and metadata.get('privacy_status') == 'private':
+            #     body['status']['privacyStatus'] = 'private'
+            #     body['status']['publishAt'] = scheduled_time.strftime('%Y-%m-%dT%H:%M:%S.000Z')
+            
+            # For now, always upload as public immediately
+            body['status']['privacyStatus'] = 'public'
             
             # Create media upload
             media = MediaFileUpload(
