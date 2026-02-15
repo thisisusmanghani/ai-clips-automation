@@ -1,0 +1,32 @@
+# Secrets - NEVER commit these
+.env
+token.json
+token_b64.txt
+client_secret*.json
+automation/token.json
+
+# Keep data JSON files
+!data/*.json
+!data/**/*.json
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+env/
+.venv/
+
+# Downloaded videos (large files)
+downloaded_videos/
+*.mp4
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db

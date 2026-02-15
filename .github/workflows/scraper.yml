@@ -1,0 +1,185 @@
+name: Bi-Monthly Scraper
+
+on:
+  schedule:
+    # Run on 1st and 15th of every month at 6 AM UTC
+    - cron: '0 6 1 */2 *'   # 1st of every 2nd month
+    - cron: '0 6 15 */2 *'  # 15th of every 2nd month (offset)
+  workflow_dispatch:  # Manual trigger
+    inputs:
+      category:
+        description: 'Category to scrape (All, Music video, Character vlog, etc.)'
+        required: false
+        default: 'All'
+      update_metadata:
+        description: 'Also scan metadata for new videos'
+        required: false
+        default: 'true'
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180  # 3 hours max for full scrape
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+      
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install playwright python-dotenv requests
+          playwright install chromium
+      
+      - name: Restore existing data
+        uses: actions/cache@v4
+        with:
+          path: data/
+          key: scraped-data-${{ github.run_number }}
+          restore-keys: |
+            scraped-data-
+      
+      - name: Run link scraper
+        run: |
+          CATEGORY="${{ github.event.inputs.category || 'All' }}"
+          echo "Scraping category: $CATEGORY"
+          
+          python scripts/scrape_links_live.py "$CATEGORY"
+          
+          # Show results
+          echo "=== Scrape Results ==="
+          python -c "
+          import json
+          with open('data/community_links_all.json' if '$CATEGORY' == 'All' else 'data/community_links_${CATEGORY,,}.json', 'r') as f:
+              data = json.load(f)
+              print(f'Total links scraped: {data[\"total\"]}')
+          "
+      
+      - name: Deduplicate and merge links
+        run: |
+          python -c "
+          import sys
+          sys.path.insert(0, 'automation')
+          from deduplication import update_master_links
+          
+          # Merge new links with master
+          new_file = 'data/community_links_all.json'
+          stats = update_master_links(new_file)
+          print(f'Deduplication complete!')
+          "
+      
+      - name: Scan metadata for new videos
+        if: ${{ github.event.inputs.update_metadata != 'false' }}
+        run: |
+          echo "Scanning metadata for new videos..."
+          timeout 7200 python scripts/scan_video_info.py || echo "Metadata scan completed or timed out"
+      
+      - name: Categorize videos
+        run: |
+          python -c "
+          import json
+          import os
+          from pathlib import Path
+          
+          # Load all video info
+          info_file = Path('data/community_video_info.json')
+          if not info_file.exists():
+              print('No video info file found')
+              exit(0)
+          
+          with open(info_file, 'r') as f:
+              data = json.load(f)
+          
+          videos = data.get('videos', [])
+          
+          # Group by category
+          categories = {}
+          for v in videos:
+              cat = v.get('category', 'unknown')
+              if cat not in categories:
+                  categories[cat] = {'videos': [], 'landscape': 0, 'portrait': 0, 'total_size': 0}
+              categories[cat]['videos'].append(v)
+              
+              w, h = v.get('width', 0), v.get('height', 0)
+              if w > h:
+                  categories[cat]['landscape'] += 1
+              else:
+                  categories[cat]['portrait'] += 1
+              categories[cat]['total_size'] += v.get('file_size_mb', 0)
+          
+          # Save category files
+          os.makedirs('data/by_category', exist_ok=True)
+          for cat, cat_data in categories.items():
+              output = {
+                  'category': cat.replace('_', ' ').title(),
+                  'total': len(cat_data['videos']),
+                  'landscape': cat_data['landscape'],
+                  'portrait': cat_data['portrait'],
+                  'total_size_mb': round(cat_data['total_size'], 1),
+                  'total_size_gb': round(cat_data['total_size'] / 1024, 1),
+                  'videos': cat_data['videos']
+              }
+              with open(f'data/by_category/videos_{cat}.json', 'w') as f:
+                  json.dump(output, f, indent=2)
+              print(f'{cat}: {len(cat_data[\"videos\"])} videos ({cat_data[\"landscape\"]} landscape, {cat_data[\"portrait\"]} portrait)')
+          "
+      
+      - name: Update data cache
+        uses: actions/cache/save@v4
+        with:
+          path: data/
+          key: scraped-data-${{ github.run_number }}
+      
+      - name: Commit new data
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          
+          git add data/*.json || true
+          git add data/by_category/*.json || true
+          
+          CHANGES=$(git diff --staged --stat | tail -1)
+          if [ -n "$CHANGES" ]; then
+            git commit -m "Update scraped data: $CHANGES [skip ci]"
+            git push
+            echo "Data committed and pushed!"
+          else
+            echo "No changes to commit"
+          fi
+      
+      - name: Summary
+        run: |
+          echo "## Scrape Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          python -c "
+          import json
+          from pathlib import Path
+          
+          # Show stats
+          master = Path('data/community_links.json')
+          if master.exists():
+              with open(master) as f:
+                  data = json.load(f)
+              print(f'**Total Links:** {data.get(\"total\", 0)}')
+          
+          # Show categories
+          cat_dir = Path('data/by_category')
+          if cat_dir.exists():
+              print('')
+              print('### Categories')
+              print('| Category | Videos | Size |')
+              print('|----------|--------|------|')
+              for f in sorted(cat_dir.glob('*.json')):
+                  with open(f) as cf:
+                      cat = json.load(cf)
+                  print(f'| {cat.get(\"category\", \"Unknown\")} | {cat.get(\"total\", 0)} | {cat.get(\"total_size_gb\", 0)} GB |')
+          " >> $GITHUB_STEP_SUMMARY

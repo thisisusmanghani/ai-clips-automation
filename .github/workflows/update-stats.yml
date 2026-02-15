@@ -1,0 +1,80 @@
+name: Update Video Stats
+
+on:
+  schedule:
+    # Run daily at midnight UTC to update video statistics
+    - cron: '0 0 * * *'
+  workflow_dispatch:
+
+jobs:
+  update-stats:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+      
+      - name: Install dependencies
+        run: |
+          pip install google-api-python-client google-auth-httplib2 \
+            google-auth-oauthlib gspread python-dotenv
+      
+      - name: Setup credentials
+        run: |
+          echo "GOOGLE_API_KEY=${{ secrets.GOOGLE_API_KEY }}" > .env
+          mkdir -p automation
+          echo "${{ secrets.OAUTH_TOKEN_PICKLE_B64 }}" | base64 -d > automation/token.json
+          echo '${{ secrets.CLIENT_SECRETS_JSON }}' > client_secret.json
+      
+      - name: Update YouTube stats
+        env:
+          SPREADSHEET_ID: ${{ secrets.SPREADSHEET_ID }}
+        run: |
+          python -c "
+          import os
+          import sys
+          sys.path.insert(0, 'automation')
+          
+          from youtube_uploader import YouTubeUploader
+          from sheets_tracker import SheetsTracker
+          
+          print('Initializing...')
+          uploader = YouTubeUploader()
+          tracker = SheetsTracker()
+          tracker.setup_spreadsheet(os.getenv('SPREADSHEET_ID'))
+          
+          # Get all uploaded video IDs from sheets
+          sheet = tracker.tracker_sheet
+          rows = sheet.get_all_values()
+          
+          updated = 0
+          for i, row in enumerate(rows[1:], start=2):  # Skip header
+              if len(row) >= 2 and row[1]:  # YouTube Video ID is column B
+                  yt_id = row[1]
+                  try:
+                      stats = uploader.get_video_stats(yt_id)
+                      if stats['views'] > 0 or stats['likes'] > 0:
+                          sheet.update(f'L{i}:N{i}', [[
+                              stats['views'],
+                              stats['likes'],
+                              stats['comments']
+                          ]])
+                          updated += 1
+                          print(f'Updated {yt_id}: {stats[\"views\"]} views')
+                  except Exception as e:
+                      print(f'Error updating {yt_id}: {e}')
+          
+          print(f'\\nUpdated stats for {updated} videos')
+          "
+      
+      - name: Summary
+        run: |
+          echo "## Stats Update Complete" >> $GITHUB_STEP_SUMMARY
+          echo "Video statistics have been refreshed in Google Sheets." >> $GITHUB_STEP_SUMMARY
