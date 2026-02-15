@@ -182,14 +182,21 @@ class VideoPipeline:
         )
         
         if success and youtube_id:
-            # 5. Track in Sheets
+            # 5. Add to category playlist
+            category = video_info.get('category', 'unknown')
+            playlist_category = 'shorts' if is_short else category
+            playlist_id = self.uploader.get_or_create_playlist(playlist_category)
+            if playlist_id:
+                self.uploader.add_to_playlist(youtube_id, playlist_id)
+            
+            # 6. Track in Sheets
             self.tracker.add_upload(video_info, youtube_id, metadata)
             
-            # 6. Mark as uploaded
+            # 7. Mark as uploaded
             self.uploaded_ids.add(video_id)
             self._save_uploaded_tracker()
             
-            # 7. Clean up downloaded file (optional - save space)
+            # 8. Clean up downloaded file (optional - save space)
             # os.remove(video_path)
             
             print(f"SUCCESS: Uploaded {metadata['title'][:50]}...")

@@ -211,6 +211,81 @@ class YouTubeUploader:
         except Exception as e:
             print(f"Error getting video stats: {e}")
             return {'views': 0, 'likes': 0, 'comments': 0}
+    
+    def get_or_create_playlist(self, category: str) -> Optional[str]:
+        """Get existing playlist or create new one for category."""
+        # Map categories to playlist names
+        playlist_names = {
+            'music_video': '🎵 Music Videos',
+            'character_vlog': '🎭 Character Vlogs', 
+            'script_to_video': '📜 Story Videos',
+            'create_from_scratch': '✨ Creative Animations',
+            'asmr_video': '🎧 ASMR Videos',
+            'shorts': '⚡ Shorts'
+        }
+        
+        playlist_name = playlist_names.get(category, f'📺 {category.replace("_", " ").title()}')
+        
+        try:
+            # Check if playlist exists
+            response = self.youtube.playlists().list(
+                part='snippet',
+                mine=True,
+                maxResults=50
+            ).execute()
+            
+            for item in response.get('items', []):
+                if item['snippet']['title'] == playlist_name:
+                    return item['id']
+            
+            # Create new playlist
+            playlist_body = {
+                'snippet': {
+                    'title': playlist_name,
+                    'description': f'AI-generated {category.replace("_", " ")} content',
+                    'defaultLanguage': 'en'
+                },
+                'status': {
+                    'privacyStatus': 'public'
+                }
+            }
+            
+            response = self.youtube.playlists().insert(
+                part='snippet,status',
+                body=playlist_body
+            ).execute()
+            
+            print(f"Created playlist: {playlist_name}")
+            return response['id']
+            
+        except Exception as e:
+            print(f"Error with playlist: {e}")
+            return None
+    
+    def add_to_playlist(self, video_id: str, playlist_id: str) -> bool:
+        """Add a video to a playlist."""
+        try:
+            body = {
+                'snippet': {
+                    'playlistId': playlist_id,
+                    'resourceId': {
+                        'kind': 'youtube#video',
+                        'videoId': video_id
+                    }
+                }
+            }
+            
+            self.youtube.playlistItems().insert(
+                part='snippet',
+                body=body
+            ).execute()
+            
+            print(f"Added video {video_id} to playlist")
+            return True
+            
+        except Exception as e:
+            print(f"Error adding to playlist: {e}")
+            return False
 
 
 def generate_schedule_time() -> datetime:
