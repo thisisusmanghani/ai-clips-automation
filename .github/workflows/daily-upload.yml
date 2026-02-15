@@ -117,3 +117,4 @@ jobs:
           git add data/deduplication_log.json || true
           git diff --staged --quiet || git commit -m "Update upload tracking [skip ci]"
           git push || true
+# Trigger workflow registration
